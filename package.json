@@ -1,0 +1,20 @@
+{
+  "name": "live-crm-notifications",
+  "version": "1.0.0",
+  "description": "Live CRM Notification System with Real-Time Targeted Delivery and Background Worker",
+  "scripts": {
+    "install:all": "npm --prefix server install && npm --prefix client install",
+    "start:server": "npm --prefix server start",
+    "start:client": "npm --prefix client run dev",
+    "test": "npm --prefix server test"
+  },
+  "keywords": [
+    "crm",
+    "notifications",
+    "websocket",
+    "sqlite",
+    "background-worker"
+  ],
+  "author": "",
+  "license": "MIT"
+}
