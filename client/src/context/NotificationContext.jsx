@@ -13,11 +13,23 @@ export function NotificationProvider({ children }) {
   const [toasts, setToasts] = useState([]);
 
   useEffect(() => {
-    const socketUri = window.location.hostname === 'localhost' ? 'http://localhost:5000' : '/';
-    const newSocket = io(socketUri, { autoConnect: true });
+    const backendUrl = import.meta.env.VITE_SOCKET_URL || (
+      window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+        ? 'http://localhost:5000'
+        : window.location.origin
+    );
+
+    const newSocket = io(backendUrl, {
+      transports: ['websocket', 'polling'],
+      autoConnect: true,
+      query: { userId: currentUser?.id || 'usr_alex' }
+    });
 
     newSocket.on('connect', () => {
       setIsConnected(true);
+      if (currentUser?.id) {
+        newSocket.emit('join_user_room', currentUser.id);
+      }
     });
 
     newSocket.on('disconnect', () => {
@@ -29,7 +41,7 @@ export function NotificationProvider({ children }) {
     return () => {
       newSocket.disconnect();
     };
-  }, []);
+  }, [currentUser?.id]);
 
   const fetchNotifications = async (userId) => {
     if (!userId) return;
@@ -47,11 +59,12 @@ export function NotificationProvider({ children }) {
 
   useEffect(() => {
     if (currentUser && socket) {
-      socket.emit('join:user', currentUser.id);
       fetchNotifications(currentUser.id);
+      socket.emit('join_user_room', currentUser.id);
 
-      const handleNewNotification = (notification) => {
-        if (notification.user_id === currentUser.id) {
+      const handleNotificationPayload = (notification) => {
+        if (!notification) return;
+        if (notification.user_id === currentUser.id || !notification.user_id) {
           setNotifications(prev => [notification, ...prev]);
           setUnreadCount(prev => prev + 1);
 
@@ -64,40 +77,22 @@ export function NotificationProvider({ children }) {
         }
       };
 
-      const handleUpdatedNotification = ({ notification, unread_count }) => {
-        if (notification.user_id === currentUser.id) {
-          setNotifications(prev => prev.map(n => n.id === notification.id ? notification : n));
-          setUnreadCount(unread_count);
-        }
-      };
-
-      const handleReadAllNotifications = ({ userId }) => {
-        if (userId === currentUser.id) {
-          setNotifications(prev => prev.map(n => ({ ...n, is_read: 1 })));
-          setUnreadCount(0);
-        }
-      };
-
-      socket.on('notification:new', handleNewNotification);
-      socket.on('notification:updated', handleUpdatedNotification);
-      socket.on('notification:read-all', handleReadAllNotifications);
+      socket.on('notification', handleNotificationPayload);
+      socket.on('notification:new', handleNotificationPayload);
 
       return () => {
-        socket.emit('leave:user', currentUser.id);
-        socket.off('notification:new', handleNewNotification);
-        socket.off('notification:updated', handleUpdatedNotification);
-        socket.off('notification:read-all', handleReadAllNotifications);
+        socket.off('notification', handleNotificationPayload);
+        socket.off('notification:new', handleNotificationPayload);
       };
     }
   }, [currentUser, socket]);
 
   const markAsRead = async (id) => {
     try {
-      const res = await fetch(`/api/notifications/${id}/read`, { method: 'PUT' });
+      const res = await fetch(`/api/notifications/${id}/read`, { method: 'PATCH' });
       if (res.ok) {
-        const data = await res.json();
-        setNotifications(prev => prev.map(n => n.id === id ? data.notification : n));
-        setUnreadCount(data.unread_count);
+        setNotifications(prev => prev.map(n => n.id === id ? { ...n, is_read: 1 } : n));
+        setUnreadCount(prev => Math.max(0, prev - 1));
       }
     } catch (err) {
       console.error('Failed to mark notification as read', err);
@@ -108,7 +103,7 @@ export function NotificationProvider({ children }) {
     if (!currentUser) return;
     try {
       const res = await fetch('/api/notifications/read-all', {
-        method: 'PUT',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: currentUser.id })
       });
@@ -117,7 +112,7 @@ export function NotificationProvider({ children }) {
         setUnreadCount(0);
       }
     } catch (err) {
-      console.error('Failed to mark all as read', err);
+      console.error('Failed to mark all notifications as read', err);
     }
   };
 
