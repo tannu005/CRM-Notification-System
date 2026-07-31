@@ -17,13 +17,15 @@ flowchart TD
     end
 
     subgraph Backend ["Backend Service (Node.js + Express)"]
-        Express["REST API Controllers"]
+        Express["REST API Controllers & JWT Auth"]
         WSServer["Socket.io Notification Room Server"]
         BGWorker["Background Worker & Scheduler"]
+        PushService["Web Push & Email Fallback"]
         
         Express --> |Targeted Room Emit| WSServer
         BGWorker --> |Auto Reminders| Express
         WSServer --> |Push to user:userId| WSClient
+        Express --> PushService
     end
 
     subgraph Storage ["Database Layer"]
@@ -51,15 +53,15 @@ flowchart TD
 3. **Persistent Notifications & Read Tracking**:
    - Notifications are stored in SQLite database.
    - Unread badges update dynamically.
-   - Users can mark individual notifications or all notifications as read.
+   - Users can mark individual notifications or all notifications as read via `PATCH /api/notifications/:id/read` and `PATCH /api/notifications/read-all`.
 
 4. **Automated & Manual Background Worker**:
    - A background process runs on an automated scheduler (every 45s).
    - Generates follow-up reminders and stale lead audit alerts.
    - Interactive **Worker & Scheduler Panel** allows reviewers to manually trigger background workflows for testing.
 
-5. **Multi-User Switcher for Local Demo**:
-   - Header dropdown allows switching active context between **Alex Vance (Admin)**, **Sarah Jenkins (Agent)**, **David Chen (Manager)**, and **Elena Rostova (Agent)** to test real-time notification delivery across tabs/roles instantly.
+5. **Multi-User Switcher for Local & Live Demo**:
+   - Header dropdown allows switching active context between **Alex Vance (Admin)**, **Sarah Jenkins (Agent)**, **David Chen (Manager)**, and **Maria Garcia (Agent)** to test real-time notification delivery across tabs/roles instantly.
 
 ---
 
@@ -73,6 +75,7 @@ flowchart TD
 | `email` | TEXT | UNIQUE, NOT NULL | User email address |
 | `role` | TEXT | NOT NULL | System role (`admin`, `agent`, `manager`) |
 | `avatar` | TEXT | NOT NULL | Profile avatar image URL |
+| `password_hash` | TEXT | NULL | Bcrypt salted password hash |
 | `created_at` | DATETIME | DEFAULT CURRENT_TIMESTAMP | Registration timestamp |
 
 ### 2. `companies`
@@ -118,6 +121,26 @@ flowchart TD
 
 ---
 
+## Architectural Tradeoffs & Production Scaling Considerations
+
+1. **Database Ephemerality vs Managed PostgreSQL**:
+   - *Current Implementation*: SQLite (`better-sqlite3`) was chosen for zero-config local evaluation without external database setup.
+   - *Production Upgrade*: For horizontal scaling across multiple container instances, SQLite would be replaced with managed PostgreSQL (e.g. Supabase, AWS RDS) using Prisma or Kysely ORM.
+
+2. **Single-Node WebSockets vs Distributed Redis Pub/Sub Adapter**:
+   - *Current Implementation*: Socket.io rooms operate in-memory on a single Node.js instance.
+   - *Production Upgrade*: To support multi-node load balancing across 5+ server replicas, `@socket.io/redis-adapter` with Redis Pub/Sub would be attached to sync room broadcasts across cluster nodes.
+
+3. **Notification List Pagination**:
+   - *Current Implementation*: Fetches active user notifications ordered by `created_at DESC`.
+   - *Production Upgrade*: To prevent memory spikes for power users with 10,000+ notifications, limit/offset or cursor-based pagination (`LIMIT 20 OFFSET ?`) with infinite scrolling would be enforced.
+
+4. **Demo Context Switcher vs Production OAuth2/SAML SSO Auth**:
+   - *Current Implementation*: Header dropdown enables evaluators to test multi-user real-time targeted notification delivery across 2 tabs in 10 seconds.
+   - *Production Upgrade*: Supported by JWT `httpOnly` secure cookies and Bcrypt password hashing, with optional Google OAuth2 / SAML SSO integration for enterprise multi-tenancy.
+
+---
+
 ## Quick Start & Local Setup
 
 ### Prerequisites
@@ -125,28 +148,26 @@ flowchart TD
 - **npm**: v9.0.0 or higher
 
 ### 1. Install Dependencies
-From project root:
 ```bash
-npm run install:all
+cd server && npm install
+cd ../client && npm install
 ```
-*(Or install separately: `cd server && npm install` and `cd client && npm install`)*
 
 ### 2. Run Automated Backend Tests
 ```bash
-npm test
+cd server && npm test
 ```
 
 ### 3. Start Development Servers
-In two separate terminals:
 
 **Terminal 1 (Backend Server - Port 5000)**:
 ```bash
-npm run start:server
+cd server && npm start
 ```
 
 **Terminal 2 (Frontend Client - Port 3000)**:
 ```bash
-npm run start:client
+cd client && npm run dev
 ```
 
 Open your browser at `http://localhost:3000`.
@@ -155,11 +176,9 @@ Open your browser at `http://localhost:3000`.
 
 ## Step-by-Step Demo & Evaluation Guide
 
-Follow these steps to test the full requirement flow:
-
 1. **Open Two Browser Windows / Tabs**:
-   - Tab A: Open `http://localhost:3000` and ensure active user is **Alex Vance (Admin)** (top-right user switcher).
-   - Tab B: Open `http://localhost:3000` and switch user to **Sarah Jenkins (Agent)**.
+   - Tab A: Open `http://localhost:3000` as **Alex Vance (Admin)**.
+   - Tab B: Open `http://localhost:3000` and switch user to **Sarah Jenkins (Agent)** using the top-right switcher.
 
 2. **Admin Assigns Company**:
    - In Tab A (Admin), navigate to **Companies**.
@@ -168,33 +187,14 @@ Follow these steps to test the full requirement flow:
    - Click **Confirm Assignment**.
 
 3. **Verify Targeted Real-Time Notification**:
-   - Immediately look at Tab B (Sarah Jenkins).
-   - Observe the real-time toast alert pop up: *"You have been assigned to Acme Corp as Account Owner by Alex Vance."*
-   - Notice the bell icon unread badge increases from 0 to 1 with sound/visual pulse.
-   - In Tab A (Admin), verify that Alex Vance did **NOT** receive Sarah's assignment notification.
+   - Observe Tab B (Sarah Jenkins): real-time toast alert arrives instantly (*"You have been assigned to Acme Corp as Account Owner by Alex Vance"*).
+   - Observe Tab A (Admin): Alex Vance receives **no notification noise**, proving targeted socket room isolation.
 
 4. **View Notification List & Mark as Read**:
-   - In Tab B (Sarah Jenkins), click the Bell icon or navigate to **Notifications**.
-   - View the new unread assignment notification.
+   - In Tab B (Sarah Jenkins), open the **Notifications** tab.
    - Click **Mark Read**. Verify unread counter updates to `0` and database updates `is_read = 1`.
 
 5. **Test Background Process Flow**:
-   - In Tab A, navigate to **Worker & Scheduler**.
-   - Click **Execute Background Job Now** (or wait 45s for automated worker).
-   - Observe the background worker executing, writing execution log to `background_jobs` table, and delivering an automated follow-up reminder notification to assigned users in real-time.
-
----
-
-## Assumptions & Design Decisions
-
-1. **Socket Room Targeted Scoping**: Rather than broadcasting events globally, Socket.io rooms are joined per `user_id`. Server emits only to `io.to('user:' + userId)`.
-2. **Zero-Config Database**: SQLite (`better-sqlite3`) was selected to enable instant local evaluation without requiring external database server setup (Docker, Postgres, etc.).
-3. **Multi-User Context Switcher**: Added an active user context switcher to make testing multi-user live notifications effortless without needing separate login flows or multiple machines.
-
----
-
-## Live Deployment Instructions
-
-- **Backend Hosting**: Deploy `server` to Render / Railway / Fly.io / Heroku.
-- **Frontend Hosting**: Deploy `client` to Vercel / Netlify / Cloudflare Pages.
-- Environment variables: `PORT=5000`, `CLIENT_ORIGIN=https://your-frontend-app.vercel.app`.
+   - Navigate to **Worker & Scheduler**.
+   - Click **Execute Background Job Now**.
+   - Observe background job execution log populate in real-time and deliver automated follow-up reminders.
