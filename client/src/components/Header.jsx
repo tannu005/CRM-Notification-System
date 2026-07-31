@@ -20,6 +20,13 @@ export default function Header({ activeTab, setActiveTab }) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const activeUser = currentUser || {
+    id: 'usr_alex',
+    name: 'Alex Vance',
+    role: 'admin',
+    avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80'
+  };
+
   return (
     <header className="navbar">
       <a href="#" className="nav-brand" onClick={(e) => { e.preventDefault(); setActiveTab('companies'); }}>
@@ -70,47 +77,60 @@ export default function Header({ activeTab, setActiveTab }) {
         <NotificationBell onNavigate={setActiveTab} />
 
         <div style={{ position: 'relative' }} ref={dropdownRef}>
-          {currentUser && (
-            <button
-              type="button"
-              className="switcher-btn"
-              onClick={() => setDropdownOpen(!dropdownOpen)}
-              title="Click to switch active user/role (Admin, Manager, Agent)"
-            >
-              <img
-                src={currentUser.avatar}
-                alt={currentUser.name}
-                className="avatar"
-              />
-              <div style={{ textAlign: 'left', lineHeight: 1.15 }}>
-                <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#f8fafc', whiteSpace: 'nowrap' }}>{currentUser.name}</div>
-                <span className={`user-role-badge ${currentUser.role}`}>{currentUser.role.toUpperCase()}</span>
+          <button
+            type="button"
+            className="switcher-btn"
+            onClick={() => setDropdownOpen(!dropdownOpen)}
+            title="Click to switch active user context (Admin, Manager, Agent)"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.75rem',
+              background: 'rgba(232, 112, 42, 0.12)',
+              border: '1px solid rgba(232, 112, 42, 0.4)',
+              padding: '0.4rem 0.95rem',
+              borderRadius: '9999px',
+              cursor: 'pointer'
+            }}
+          >
+            <img
+              src={activeUser.avatar}
+              alt={activeUser.name}
+              className="avatar"
+              style={{ width: '32px', height: '32px', borderRadius: '50%', border: '2px solid #e8702a' }}
+            />
+            <div style={{ textAlign: 'left', lineHeight: 1.15 }}>
+              <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#ffffff', whiteSpace: 'nowrap' }}>
+                {activeUser.name}
               </div>
-              <ChevronDown size={14} style={{ color: '#94a3b8', flexShrink: 0 }} />
-            </button>
-          )}
+              <span className={`user-role-badge ${activeUser.role}`} style={{ fontSize: '0.68rem', fontWeight: 800 }}>
+                {activeUser.role.toUpperCase()}
+              </span>
+            </div>
+            <ChevronDown size={14} style={{ color: '#fdba74', flexShrink: 0 }} />
+          </button>
 
           {dropdownOpen && (
-            <div className="switcher-dropdown">
-              <div className="dropdown-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span>Switch Active User &amp; Role</span>
-                <Shield size={12} style={{ color: '#e8702a' }} />
+            <div className="switcher-dropdown" style={{ display: 'block', visibility: 'visible', opacity: 1 }}>
+              <div className="dropdown-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.6rem 0.85rem' }}>
+                <span style={{ fontWeight: 800, color: '#94a3b8' }}>Switch Active User</span>
+                <Shield size={14} style={{ color: '#e8702a' }} />
               </div>
               {users.map((u) => (
                 <button
                   key={u.id}
-                  className={`switcher-item ${currentUser?.id === u.id ? 'active' : ''}`}
+                  className={`switcher-item ${activeUser.id === u.id ? 'active' : ''}`}
                   onClick={() => {
                     switchUser(u);
                     setDropdownOpen(false);
                   }}
                 >
-                  <img src={u.avatar} alt={u.name} className="avatar" />
+                  <img src={u.avatar} alt={u.name} className="avatar" style={{ width: '28px', height: '28px', borderRadius: '50%' }} />
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{u.name}</div>
+                    <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#ffffff' }}>{u.name}</div>
                     <span className={`user-role-badge ${u.role}`}>{u.role.toUpperCase()}</span>
                   </div>
-                  {currentUser?.id === u.id && <Check size={16} style={{ color: '#e8702a' }} />}
+                  {activeUser.id === u.id && <Check size={16} style={{ color: '#e8702a' }} />}
                 </button>
               ))}
             </div>
