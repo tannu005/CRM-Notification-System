@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Building2, Users, Bell, Cpu, ChevronDown, Check } from 'lucide-react';
+import { Building2, Users, Bell, Cpu, ChevronDown, Check, Shield } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNotifications } from '../context/NotificationContext';
 import NotificationBell from './NotificationBell';
@@ -75,6 +75,7 @@ export default function Header({ activeTab, setActiveTab }) {
               type="button"
               className="switcher-btn"
               onClick={() => setDropdownOpen(!dropdownOpen)}
+              title="Click to switch active user/role (Admin, Manager, Agent)"
             >
               <img
                 src={currentUser.avatar}
@@ -83,7 +84,7 @@ export default function Header({ activeTab, setActiveTab }) {
               />
               <div style={{ textAlign: 'left', lineHeight: 1.15 }}>
                 <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#f8fafc', whiteSpace: 'nowrap' }}>{currentUser.name}</div>
-                <span className={`user-role-badge ${currentUser.role}`}>{currentUser.role}</span>
+                <span className={`user-role-badge ${currentUser.role}`}>{currentUser.role.toUpperCase()}</span>
               </div>
               <ChevronDown size={14} style={{ color: '#94a3b8', flexShrink: 0 }} />
             </button>
@@ -91,7 +92,10 @@ export default function Header({ activeTab, setActiveTab }) {
 
           {dropdownOpen && (
             <div className="switcher-dropdown">
-              <div className="dropdown-header">Switch Active User</div>
+              <div className="dropdown-header" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>Switch Active User &amp; Role</span>
+                <Shield size={12} style={{ color: '#e8702a' }} />
+              </div>
               {users.map((u) => (
                 <button
                   key={u.id}
@@ -104,7 +108,7 @@ export default function Header({ activeTab, setActiveTab }) {
                   <img src={u.avatar} alt={u.name} className="avatar" />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{u.name}</div>
-                    <span className={`user-role-badge ${u.role}`}>{u.role}</span>
+                    <span className={`user-role-badge ${u.role}`}>{u.role.toUpperCase()}</span>
                   </div>
                   {currentUser?.id === u.id && <Check size={16} style={{ color: '#e8702a' }} />}
                 </button>
