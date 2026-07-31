@@ -1,18 +1,20 @@
 const Database = require('better-sqlite3');
 const path = require('path');
+const bcrypt = require('bcryptjs');
 
-const dbPath = path.join(__dirname, 'crm.db');
+const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'crm.db');
 const db = new Database(dbPath);
 
-db.pragma('foreign_keys = ON');
+db.pragma('journal_mode = WAL');
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
-    role TEXT NOT NULL DEFAULT 'agent',
+    role TEXT NOT NULL,
     avatar TEXT NOT NULL,
+    password_hash TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -21,7 +23,7 @@ db.exec(`
     name TEXT NOT NULL,
     industry TEXT NOT NULL,
     domain TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'prospect',
+    status TEXT DEFAULT 'prospect',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -33,7 +35,7 @@ db.exec(`
     title TEXT NOT NULL,
     company_id TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(company_id) REFERENCES companies(id) ON DELETE SET NULL
+    FOREIGN KEY (company_id) REFERENCES companies(id)
   );
 
   CREATE TABLE IF NOT EXISTS assignments (
@@ -44,8 +46,8 @@ db.exec(`
     role TEXT NOT NULL,
     assigned_by_id TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
-    FOREIGN KEY(assigned_by_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (user_id) REFERENCES users(id),
+    FOREIGN KEY (assigned_by_id) REFERENCES users(id)
   );
 
   CREATE TABLE IF NOT EXISTS notifications (
@@ -60,60 +62,97 @@ db.exec(`
     is_read INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     read_at DATETIME,
-    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    FOREIGN KEY (user_id) REFERENCES users(id)
   );
 
   CREATE TABLE IF NOT EXISTS background_jobs (
     id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
+    job_type TEXT NOT NULL DEFAULT 'reminder',
+    type TEXT,
     status TEXT NOT NULL,
-    details TEXT NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    details TEXT,
+    executed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    subscription_json TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
   );
 `);
 
-function seedDatabase() {
-  const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
-  if (userCount > 0) return;
+try {
+  db.exec('ALTER TABLE users ADD COLUMN password_hash TEXT');
+} catch (e) {}
 
-  const insertUser = db.prepare('INSERT INTO users (id, name, email, role, avatar) VALUES (?, ?, ?, ?, ?)');
-  const insertCompany = db.prepare('INSERT INTO companies (id, name, industry, domain, status) VALUES (?, ?, ?, ?, ?)');
-  const insertContact = db.prepare('INSERT INTO contacts (id, name, email, phone, title, company_id) VALUES (?, ?, ?, ?, ?, ?)');
+try {
+  db.exec("ALTER TABLE background_jobs ADD COLUMN job_type TEXT NOT NULL DEFAULT 'reminder'");
+} catch (e) {}
 
-  const seedUsers = [
-    ['usr_1', 'Alex Vance', 'alex.vance@apex-crm.com', 'admin', 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'],
-    ['usr_2', 'Sarah Jenkins', 'sarah.j@apex-crm.com', 'agent', 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80'],
-    ['usr_3', 'David Chen', 'david.c@apex-crm.com', 'manager', 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80'],
-    ['usr_4', 'Elena Rostova', 'elena.r@apex-crm.com', 'agent', 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&auto=format&fit=crop&q=80']
-  ];
+const defaultHash = bcrypt.hashSync('Password123!', 10);
+db.prepare('UPDATE users SET password_hash = ? WHERE password_hash IS NULL').run(defaultHash);
 
-  for (const u of seedUsers) {
-    insertUser.run(...u);
-  }
+const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get();
 
-  const seedCompanies = [
-    ['cmp_1', 'Acme Corp', 'Enterprise Software', 'acme.com', 'customer'],
-    ['cmp_2', 'Starlight Logistics', 'Supply Chain & Freight', 'starlightlogistics.io', 'prospect'],
-    ['cmp_3', 'Nexus Health', 'Biotech & Pharma', 'nexushealth.org', 'lead'],
-    ['cmp_4', 'Vortex Energy', 'Clean Tech', 'vortexenergy.co', 'prospect']
-  ];
+if (userCount.count === 0) {
+  const insertUser = db.prepare(`
+    INSERT INTO users (id, name, email, role, avatar, password_hash)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
 
-  for (const c of seedCompanies) {
-    insertCompany.run(...c);
-  }
+  insertUser.run(
+    'usr_alex',
+    'Alex Vance',
+    'alex@apex.crm',
+    'admin',
+    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80',
+    defaultHash
+  );
 
-  const seedContacts = [
-    ['cnt_1', 'Michael Scott', 'm.scott@acme.com', '+1 (555) 234-5678', 'VP of Operations', 'cmp_1'],
-    ['cnt_2', 'Pam Beesly', 'p.beesly@acme.com', '+1 (555) 234-5679', 'Director of Procurement', 'cmp_1'],
-    ['cnt_3', 'Robert California', 'rc@starlightlogistics.io', '+1 (555) 876-5432', 'Chief Executive Officer', 'cmp_2'],
-    ['cnt_4', 'Dr. Evelyn Reed', 'e.reed@nexushealth.org', '+1 (555) 345-6789', 'Head of Clinical R&D', 'cmp_3']
-  ];
+  insertUser.run(
+    'usr_sarah',
+    'Sarah Jenkins',
+    'sarah@apex.crm',
+    'agent',
+    'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&w=150&q=80',
+    defaultHash
+  );
 
-  for (const ct of seedContacts) {
-    insertContact.run(...ct);
-  }
+  insertUser.run(
+    'usr_david',
+    'David Chen',
+    'david@apex.crm',
+    'manager',
+    'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80',
+    defaultHash
+  );
+
+  insertUser.run(
+    'usr_maria',
+    'Maria Garcia',
+    'maria@apex.crm',
+    'agent',
+    'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=150&q=80',
+    defaultHash
+  );
+
+  const insertCompany = db.prepare(`
+    INSERT INTO companies (id, name, industry, domain, status)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+
+  insertCompany.run('cmp_acme', 'Acme Corporation', 'Technology', 'acme.com', 'prospect');
+  insertCompany.run('cmp_nexus', 'Nexus Health', 'Healthcare', 'nexushealth.org', 'customer');
+
+  const insertContact = db.prepare(`
+    INSERT INTO contacts (id, name, email, phone, title, company_id)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+
+  insertContact.run('cnt_john', 'John Doe', 'john@acme.com', '+1 (555) 019-2831', 'VP of Engineering', 'cmp_acme');
 }
-
-seedDatabase();
 
 module.exports = db;

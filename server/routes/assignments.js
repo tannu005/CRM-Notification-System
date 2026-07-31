@@ -1,74 +1,75 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
+const { authenticateJWT, requireRole } = require('../middleware/auth');
+const { sendEmailFallback } = require('../services/emailService');
 
-function createAssignmentRoutes(io) {
-  router.get('/', (req, res) => {
-    const assignments = db.prepare(`
-      SELECT a.*, 
-        u.name as user_name, u.avatar as user_avatar,
-        ab.name as assigned_by_name
-      FROM assignments a
-      JOIN users u ON a.user_id = u.id
-      JOIN users ab ON a.assigned_by_id = ab.id
-      ORDER BY a.created_at DESC
-    `).all();
-    res.json(assignments);
-  });
+router.post('/', authenticateJWT, (req, res) => {
+  const { entity_type, entity_id, user_id, role, assigned_by_id } = req.body;
 
-  router.post('/', (req, res) => {
-    const { entity_type, entity_id, user_id, role, assigned_by_id } = req.body;
+  if (!entity_type || !entity_id || !user_id || !role) {
+    return res.status(400).json({ error: 'Missing required assignment fields' });
+  }
 
-    if (!entity_type || !entity_id || !user_id || !role || !assigned_by_id) {
-      return res.status(400).json({ error: 'Missing required assignment parameters' });
-    }
+  const assignerId = assigned_by_id || req.user?.id || 'usr_alex';
+  const assignmentId = 'asg_' + Math.random().toString(36).substring(2, 9);
 
-    let entityName = '';
-    if (entity_type === 'company') {
-      const comp = db.prepare('SELECT name FROM companies WHERE id = ?').get(entity_id);
-      if (!comp) return res.status(404).json({ error: 'Company not found' });
-      entityName = comp.name;
-    } else if (entity_type === 'contact') {
-      const cnt = db.prepare('SELECT name FROM contacts WHERE id = ?').get(entity_id);
-      if (!cnt) return res.status(404).json({ error: 'Contact not found' });
-      entityName = cnt.name;
-    } else {
-      return res.status(400).json({ error: 'Invalid entity type' });
-    }
+  db.prepare(`
+    INSERT INTO assignments (id, entity_type, entity_id, user_id, role, assigned_by_id)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(assignmentId, entity_type, entity_id, user_id, role, assignerId);
 
-    const assignedBy = db.prepare('SELECT name FROM users WHERE id = ?').get(assigned_by_id);
-    const assignerName = assignedBy ? assignedBy.name : 'System Admin';
+  let entityName = 'Entity';
+  if (entity_type === 'company') {
+    const comp = db.prepare('SELECT name FROM companies WHERE id = ?').get(entity_id);
+    if (comp) entityName = comp.name;
+  } else if (entity_type === 'contact') {
+    const cont = db.prepare('SELECT name FROM contacts WHERE id = ?').get(entity_id);
+    if (cont) entityName = cont.name;
+  }
 
-    db.prepare('DELETE FROM assignments WHERE entity_type = ? AND entity_id = ? AND user_id = ?')
-      .run(entity_type, entity_id, user_id);
+  const assigner = db.prepare('SELECT name FROM users WHERE id = ?').get(assignerId);
+  const assignerName = assigner ? assigner.name : 'An Admin';
 
-    const assignmentId = 'asg_' + Math.random().toString(36).substring(2, 10);
-    db.prepare('INSERT INTO assignments (id, entity_type, entity_id, user_id, role, assigned_by_id) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(assignmentId, entity_type, entity_id, user_id, role, assigned_by_id);
+  const notificationId = 'ntf_' + Math.random().toString(36).substring(2, 9);
+  const title = `New Assignment: ${entityName}`;
+  const message = `You have been assigned to ${entityName} as ${role} by ${assignerName}.`;
 
-    const notifId = 'ntf_' + Math.random().toString(36).substring(2, 10);
-    const title = `New ${entity_type === 'company' ? 'Company' : 'Contact'} Assignment`;
-    const message = `You have been assigned to ${entityName} as ${role} by ${assignerName}.`;
+  db.prepare(`
+    INSERT INTO notifications (id, user_id, type, title, message, entity_type, entity_id, role)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(notificationId, user_id, 'assignment', title, message, entity_type, entity_id, role);
 
-    db.prepare(`
-      INSERT INTO notifications (id, user_id, type, title, message, entity_type, entity_id, role, is_read)
-      VALUES (?, ?, 'assignment', ?, ?, ?, ?, ?, 0)
-    `).run(notifId, user_id, title, message, entity_type, entity_id, role);
+  const io = req.app.get('io');
+  if (io) {
+    const payload = {
+      id: notificationId,
+      user_id,
+      type: 'assignment',
+      title,
+      message,
+      entity_type,
+      entity_id,
+      role,
+      created_at: new Date().toISOString()
+    };
+    io.to(`user:${user_id}`).emit('notification', payload);
+  }
 
-    const notificationPayload = db.prepare('SELECT * FROM notifications WHERE id = ?').get(notifId);
-
-    if (io) {
-      io.to(`user:${user_id}`).emit('notification:new', notificationPayload);
-    }
-
-    res.status(201).json({
-      message: 'Assignment created successfully',
-      assignment_id: assignmentId,
-      notification: notificationPayload
+  const targetUser = db.prepare('SELECT email FROM users WHERE id = ?').get(user_id);
+  if (targetUser && targetUser.email) {
+    sendEmailFallback({
+      toEmail: targetUser.email,
+      subject: title,
+      body: message
     });
+  }
+
+  res.status(201).json({
+    success: true,
+    assignment: { id: assignmentId, entity_type, entity_id, user_id, role },
+    notification: { id: notificationId, title, message }
   });
+});
 
-  return router;
-}
-
-module.exports = createAssignmentRoutes;
+module.exports = router;

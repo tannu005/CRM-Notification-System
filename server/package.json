@@ -8,9 +8,16 @@
     "test": "node test.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.1.0",
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^13.0.2",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "express": "^4.21.0",
-    "socket.io": "^4.8.0"
+    "jsonwebtoken": "^9.0.3",
+    "nodemailer": "^9.0.3",
+    "pino": "^10.3.1",
+    "pino-http": "^11.0.0",
+    "socket.io": "^4.8.0",
+    "web-push": "^3.6.7"
   }
 }
